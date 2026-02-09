@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Expense Tracker - Dashboard</title>
+  <link rel="stylesheet" href="style.css">
+
+  <style>
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 20px;
+    }
+    th, td {
+      border: 1px solid #ddd;
+      padding: 10px;
+      text-align: center;
+    }
+    th {
+      background-color: #f4f4f4;
+    }
+    .delete-btn {
+      background-color: rgb(172, 125, 125);
+      color: white;
+      border: none;
+      padding: 5px 10px;
+      cursor: pointer;
+      border-radius: 5px;
+    }
+    .delete-btn:hover {
+      background-color: rgb(0, 0, 0);
+    }
+
+    .filters {
+      margin-top: 30px;
+      padding: 15px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+    }
+
+    .filters label {
+      margin-right: 5px;
+    }
+
+    .filters select,
+    .filters input {
+      margin-right: 15px;
+      padding: 4px 6px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Protect page: if no token, go to login -->
+  <script>
+    const tokenCheck = localStorage.getItem("token");
+    if (!tokenCheck) {
+      window.location.href = "login.html";
+    }
+  </script>
+
+  <!-- Navbar -->
+  <nav class="navbar">
+    <h2>Expense Tracker</h2>
+    <div>
+      <a href="index.html">Home</a>
+      <a href="add_expenses.html">Add Expense</a>
+      <a href="#" onclick="logout()">Logout</a>
+    </div>
+  </nav>
+
+  <!-- Main container -->
+  <div class="container">
+    <h2 id="welcomeUser">Welcome</h2>
+    <p>Here you can view all your expenses and see analytics.</p>
+
+    <!-- Expenses Table -->
+    <table>
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Category</th>
+          <th>Description</th>
+          <th>Amount</th>
+        </tr>
+      </thead>
+      <tbody id="expenseTableBody"></tbody>
+    </table>
+
+    <!-- Filters -->
+    <div class="filters">
+      <h3>Filter Expenses</h3>
+
+      <label for="month">Month:</label>
+      <select id="month">
+        <option value="">All</option>
+        <option value="1">Jan</option>
+        <option value="2">Feb</option>
+        <option value="3">Mar</option>
+        <option value="4">Apr</option>
+        <option value="5">May</option>
+        <option value="6">Jun</option>
+        <option value="7">Jul</option>
+        <option value="8">Aug</option>
+        <option value="9">Sep</option>
+        <option value="10">Oct</option>
+        <option value="11">Nov</option>
+        <option value="12">Dec</option>
+      </select>
+
+      <label for="year">Year:</label>
+      <input type="number" id="year" placeholder="2025">
+
+      <label for="categoryFilter">Category:</label>
+      <input type="text" id="categoryFilter" placeholder="e.g. Food">
+
+      <button onclick="loadExpenses()">Apply Filter</button>
+    </div>
+
+    <hr>
+
+    <h3>Expense Breakdown by Category</h3>
+    <canvas id="expenseChart" width="400" height="400"></canvas>
+  </div>
+
+  <!-- Chart.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <script>
+    const API_BASE = "https://expensetracker-6fhq.onrender.com"; 
+
+    let expenseChart = null; // reuse chart instance
+
+    // Logout
+    function logout() {
+      localStorage.removeItem("token");
+      window.location.href = "login.html";
+    }
+
+    // Load user name on top (optional)
+    async function loadUser() {
+      const token = localStorage.getItem("token");
+      if (!token) return;
+
+      try {
+        const res = await fetch("http://localhost:5000/api/user/me", {
+          headers: {
+            "Authorization": `Bearer ${token}`
+          }
+        });
+        if (!res.ok) return;
+        const user = await res.json();
+        document.getElementById("welcomeUser").innerText =
+          `Welcome, ${user.name || "User"}!`;
+      } catch (err) {
+        console.error("User load error:", err);
+      }
+    }
+
+    // Fetch expenses from backend and update table + chart
+    async function loadExpenses() {
+      const token = localStorage.getItem("token");
+      if (!token) {
+        alert("Please login again");
+        window.location.href = "login.html";
+        return;
+      }
+
+      const month = document.getElementById("month").value;
+      const year = document.getElementById("year").value;
+      const categoryFilter = document.getElementById("categoryFilter").value;
+
+      // build query string
+      let query = "";
+      const params = [];
+      if (month) params.push(`month=${month}`);
+      if (year) params.push(`year=${year}`);
+      if (categoryFilter) params.push(`category=${encodeURIComponent(categoryFilter)}`);
+      if (params.length > 0) query = "?" + params.join("&");
+
+      try {
+        const res = await fetch(`http://localhost:5000/api/expenses${query}`, {
+          headers: {
+            "Authorization": `Bearer ${token}`
+          }
+        });
+
+        const expenses = await res.json();
+        console.log("Expenses:", expenses);
+
+        renderExpensesTable(expenses);
+        updateChart(expenses);
+      } catch (err) {
+        console.error("Load expenses error:", err);
+        alert("Failed to load expenses");
+      }
+    }
+
+    // Fill the table
+    function renderExpensesTable(expenses) {
+      const tableBody = document.getElementById("expenseTableBody");
+      tableBody.innerHTML = "";
+
+      if (!expenses || expenses.length === 0) {
+        tableBody.innerHTML = "<tr><td colspan='4'>No expenses found.</td></tr>";
+        return;
+      }
+
+      expenses.forEach(exp => {
+        const row = document.createElement("tr");
+
+        // exp.date comes as e.g. "2025-02-15T00:00:00.000Z"
+        const dateText = exp.date ? exp.date.toString().substring(0, 10) : "";
+
+        row.innerHTML = `
+          <td>${dateText}</td>
+          <td>${exp.category || ""}</td>
+          <td>${exp.title || exp.description || ""}</td>
+          <td>₹${exp.amount}</td>
+        `;
+
+        tableBody.appendChild(row);
+      });
+    }
+
+    // Build chart from expenses
+    function updateChart(expenses) {
+      const categoryTotals = {};
+      expenses.forEach(e => {
+        const cat = e.category || "Other";
+        const amt = Number(e.amount) || 0;
+        categoryTotals[cat] = (categoryTotals[cat] || 0) + amt;
+      });
+
+      const labels = Object.keys(categoryTotals);
+      const data = Object.values(categoryTotals);
+
+      const ctx = document.getElementById("expenseChart").getContext("2d");
+
+      if (expenseChart) {
+        expenseChart.destroy();
+      }
+
+      expenseChart = new Chart(ctx, {
+        type: "pie", // change to "bar" if you want bar chart
+        data: {
+          labels,
+          datasets: [{
+            data
+          }]
+        }
+      });
+    }
+
+    // Run when page loads
+    window.addEventListener("load", () => {
+      loadUser();
+      loadExpenses();
+    });
+  </script>
+
+</body>
+</html>
